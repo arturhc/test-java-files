@@ -1,17 +1,23 @@
 @echo off
 setlocal
 
+set "SRC=src\main\java"
+set "OUT=out"
+set "LIBS=libs\*"
+
 echo === Compilando ===
-call mvn -DskipTests compile
+if not exist "%OUT%" mkdir "%OUT%"
+
+javac -encoding UTF-8 -cp "%LIBS%" -d "%OUT%" "%SRC%\app\QrGeneratorApp.java"
 if errorlevel 1 goto :error
 
 echo === Ejecutando app ===
-call mvn exec:java -Dexec.mainClass="app.QrGeneratorApp" -Dexec.cleanupDaemonThreads=false -Dexec.args="%*"
+java -cp "%OUT%;%LIBS%" app.QrGeneratorApp
 if errorlevel 1 goto :error
 
 goto :eof
 
 :error
 echo.
-echo ERROR: Maven fallo. Revisa el output de arriba.
+echo ERROR: Fallo la ejecucion. Revisa el output de arriba.
 pause
