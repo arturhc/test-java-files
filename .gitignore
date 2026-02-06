@@ -1,0 +1,30 @@
+# Java / Maven
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+/reports/
+/target/
+/out/
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temp
+*.swp
+*~
+*.tmp

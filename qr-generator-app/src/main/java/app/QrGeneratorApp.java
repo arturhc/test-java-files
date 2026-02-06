@@ -53,7 +53,7 @@ import javax.swing.event.DocumentListener;
 
 public final class QrGeneratorApp {
     private static final int CHUNK_SIZE = 2000;
-    private static final int SLIDE_DELAY_MS = 2000;
+    private static final int SLIDE_DELAY_MS = 400;
     private static QrSlideshow currentSlideshow;
     private static Path selectedFile;
     private static String selectedFileBase64;
@@ -109,6 +109,7 @@ public final class QrGeneratorApp {
 
         JLabel qrCountLabel = new JLabel("Total QRs: 0");
         qrCountLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        qrCountLabel.setBorder(BorderFactory.createEmptyBorder(6, 12, 6, 12));
 
         chooseFileButton.addActionListener(event -> {
             chooseFile(frame, fileLabel, sourceFile);
@@ -135,9 +136,14 @@ public final class QrGeneratorApp {
         sourceText.addActionListener(e -> updateQrCountLabel(qrCountLabel, textArea, true));
         sourceFile.addActionListener(e -> updateQrCountLabel(qrCountLabel, textArea, false));
 
+        JPanel qrCountRow = new JPanel();
+        qrCountRow.setLayout(new BoxLayout(qrCountRow, BoxLayout.X_AXIS));
+        qrCountRow.add(qrCountLabel);
+        qrCountRow.add(Box.createHorizontalGlue());
+
         JPanel centerPanel = new JPanel(new BorderLayout());
         centerPanel.add(scrollPane, BorderLayout.CENTER);
-        centerPanel.add(qrCountLabel, BorderLayout.SOUTH);
+        centerPanel.add(qrCountRow, BorderLayout.SOUTH);
 
         frame.add(centerPanel, BorderLayout.CENTER);
 
