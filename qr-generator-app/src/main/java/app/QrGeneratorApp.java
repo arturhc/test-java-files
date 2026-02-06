@@ -46,12 +46,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.awt.GraphicsEnvironment;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
 public final class QrGeneratorApp {
     private static final int CHUNK_SIZE = 2000;
     private static final int SLIDE_DELAY_MS = 2000;
     private static QrSlideshow currentSlideshow;
     private static Path selectedFile;
+    private static String selectedFileBase64;
 
     private QrGeneratorApp() {
     }
@@ -102,9 +105,39 @@ public final class QrGeneratorApp {
         generateButton.setFocusPainted(false);
         generateButton.addActionListener(event -> onGenerate(frame, textArea.getText(), sourceText.isSelected()));
 
-        chooseFileButton.addActionListener(event -> chooseFile(frame, fileLabel, sourceFile));
+        JLabel qrCountLabel = new JLabel("Total QRs: 0");
+        qrCountLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
 
-        frame.add(scrollPane, BorderLayout.CENTER);
+        chooseFileButton.addActionListener(event -> {
+            chooseFile(frame, fileLabel, sourceFile);
+            updateQrCountLabel(qrCountLabel, textArea, sourceText.isSelected());
+        });
+
+        textArea.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                updateQrCountLabel(qrCountLabel, textArea, sourceText.isSelected());
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                updateQrCountLabel(qrCountLabel, textArea, sourceText.isSelected());
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                updateQrCountLabel(qrCountLabel, textArea, sourceText.isSelected());
+            }
+        });
+
+        sourceText.addActionListener(e -> updateQrCountLabel(qrCountLabel, textArea, true));
+        sourceFile.addActionListener(e -> updateQrCountLabel(qrCountLabel, textArea, false));
+
+        JPanel centerPanel = new JPanel(new BorderLayout());
+        centerPanel.add(scrollPane, BorderLayout.CENTER);
+        centerPanel.add(qrCountLabel, BorderLayout.SOUTH);
+
+        frame.add(centerPanel, BorderLayout.CENTER);
 
         JPanel sourceRow = new JPanel();
         sourceRow.setLayout(new BoxLayout(sourceRow, BoxLayout.X_AXIS));
@@ -158,13 +191,17 @@ public final class QrGeneratorApp {
                         JOptionPane.WARNING_MESSAGE);
                 return;
             }
-            try {
-                byte[] bytes = Files.readAllBytes(selectedFile);
-                raw = Base64.getEncoder().encodeToString(bytes);
-            } catch (IOException ex) {
-                JOptionPane.showMessageDialog(parent, "No se pudo leer el archivo.", "Error",
-                        JOptionPane.ERROR_MESSAGE);
-                return;
+            if (selectedFileBase64 != null) {
+                raw = selectedFileBase64;
+            } else {
+                try {
+                    byte[] bytes = Files.readAllBytes(selectedFile);
+                    raw = Base64.getEncoder().encodeToString(bytes);
+                } catch (IOException ex) {
+                    JOptionPane.showMessageDialog(parent, "No se pudo leer el archivo.", "Error",
+                            JOptionPane.ERROR_MESSAGE);
+                    return;
+                }
             }
         }
 
@@ -191,7 +228,26 @@ public final class QrGeneratorApp {
             selectedFile = chooser.getSelectedFile().toPath();
             fileLabel.setText(selectedFile.toString());
             sourceFile.setSelected(true);
+            try {
+                byte[] bytes = Files.readAllBytes(selectedFile);
+                selectedFileBase64 = Base64.getEncoder().encodeToString(bytes);
+            } catch (IOException ex) {
+                selectedFileBase64 = null;
+                JOptionPane.showMessageDialog(parent, "No se pudo leer el archivo.", "Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
         }
+    }
+
+    private static void updateQrCountLabel(JLabel label, JTextArea textArea, boolean useTextSource) {
+        int count;
+        if (useTextSource) {
+            String text = textArea.getText();
+            count = countChunks(text);
+        } else {
+            count = countChunks(selectedFileBase64);
+        }
+        label.setText("Total QRs: " + count);
     }
 
     private static QrSlideshow showQrWindow(JFrame parent, String text) throws WriterException {
@@ -222,6 +278,14 @@ public final class QrGeneratorApp {
             index = end;
         }
         return chunks;
+    }
+
+    private static int countChunks(String text) {
+        if (text == null || text.isEmpty()) {
+            return 0;
+        }
+        int codePoints = text.codePointCount(0, text.length());
+        return (codePoints + CHUNK_SIZE - 1) / CHUNK_SIZE;
     }
 
     private static final class QrSlideshow {
