@@ -1,7 +1,17 @@
 @echo off
 setlocal
 
-mvn -q -DskipTests compile
-if errorlevel 1 exit /b 1
+echo === Compilando ===
+call mvn -DskipTests compile
+if errorlevel 1 goto :error
 
-mvn -q exec:java -Dexec.mainClass="app.QrGeneratorApp" -Dexec.args="%*"
+echo === Ejecutando app ===
+call mvn exec:java -Dexec.mainClass="app.QrGeneratorApp" -Dexec.cleanupDaemonThreads=false -Dexec.args="%*"
+if errorlevel 1 goto :error
+
+goto :eof
+
+:error
+echo.
+echo ERROR: Maven fallo. Revisa el output de arriba.
+pause
