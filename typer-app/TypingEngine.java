@@ -3,22 +3,31 @@ import java.awt.Robot;
 import java.awt.event.KeyEvent;
 
 public final class TypingEngine {
-    private static final int CHAR_DELAY_MS = 2;
+    private static final int CHAR_DELAY_MS = 1;
 
     private TypingEngine() {
     }
 
     public static void type(String text) {
+        type(text, null);
+    }
+
+    public static void type(String text, ProgressListener listener) {
         try {
             Robot robot = new Robot();
             robot.setAutoDelay(CHAR_DELAY_MS);
-            typeWithRobot(robot, text);
+            typeWithRobot(robot, text, listener);
         } catch (AWTException ex) {
             ex.printStackTrace();
         }
     }
 
-    private static void typeWithRobot(Robot robot, String text) {
+    private static void typeWithRobot(Robot robot, String text, ProgressListener listener) {
+        int total = text.codePointCount(0, text.length());
+        long start = System.nanoTime();
+        ProgressState progressState = new ProgressState(start);
+        int typed = 0;
+
         for (int i = 0; i < text.length(); ) {
             int codePoint = text.codePointAt(i);
             i += Character.charCount(codePoint);
@@ -26,6 +35,8 @@ public final class TypingEngine {
             if (codePoint == '\n') {
                 robot.keyPress(KeyEvent.VK_ENTER);
                 robot.keyRelease(KeyEvent.VK_ENTER);
+                typed++;
+                updateProgress(listener, typed, total, start, progressState);
                 continue;
             }
             if (codePoint == '\r') {
@@ -34,6 +45,8 @@ public final class TypingEngine {
             if (codePoint == '\t') {
                 robot.keyPress(KeyEvent.VK_TAB);
                 robot.keyRelease(KeyEvent.VK_TAB);
+                typed++;
+                updateProgress(listener, typed, total, start, progressState);
                 continue;
             }
 
@@ -42,14 +55,39 @@ public final class TypingEngine {
                 int keyCode = KeyEvent.getExtendedKeyCodeForChar(ch);
                 if (canTypeDirectly(keyCode)) {
                     typeKey(robot, ch, keyCode);
+                    typed++;
+                    updateProgress(listener, typed, total, start, progressState);
                     continue;
                 }
             }
 
             if (codePoint >= 0 && codePoint <= 255) {
                 typeAltCode(robot, codePoint);
+                typed++;
+                updateProgress(listener, typed, total, start, progressState);
             }
         }
+
+        if (listener != null) {
+            listener.onProgress(total, total, System.nanoTime() - start);
+        }
+    }
+
+    private static void updateProgress(ProgressListener listener, int typed, int total, long start,
+                                       ProgressState state) {
+        if (listener == null) {
+            return;
+        }
+        long now = System.nanoTime();
+        boolean shouldUpdate = typed >= total
+                || typed - state.lastUpdateCount >= 50
+                || now - state.lastUpdateNanos >= 50_000_000L;
+        if (!shouldUpdate) {
+            return;
+        }
+        listener.onProgress(typed, total, now - start);
+        state.lastUpdateCount = typed;
+        state.lastUpdateNanos = now;
     }
 
     private static boolean canTypeDirectly(int keyCode) {
@@ -124,5 +162,19 @@ public final class TypingEngine {
             robot.keyRelease(keyCode);
         }
         robot.keyRelease(KeyEvent.VK_ALT);
+    }
+
+    public interface ProgressListener {
+        void onProgress(int typed, int total, long elapsedNanos);
+    }
+
+    private static final class ProgressState {
+        private int lastUpdateCount;
+        private long lastUpdateNanos;
+
+        private ProgressState(long startNanos) {
+            this.lastUpdateCount = 0;
+            this.lastUpdateNanos = startNanos;
+        }
     }
 }

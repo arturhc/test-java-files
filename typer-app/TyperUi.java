@@ -18,6 +18,7 @@ import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.UIManager;
 
 public class TyperUi {
@@ -31,6 +32,12 @@ public class TyperUi {
     private final JRadioButton sourceText;
     private final JRadioButton sourceFile;
     private final JProgressBar progressBar;
+    private final JLabel countLabel;
+    private final JLabel percentLabel;
+    private final JLabel etaLabel;
+    private final JLabel milestoneLabel;
+    private final Timer milestoneTimer;
+    private int lastMilestone;
 
     private Path selectedFile;
 
@@ -67,8 +74,22 @@ public class TyperUi {
         startButton.setBorder(BorderFactory.createEmptyBorder(10, 12, 10, 12));
 
         progressBar = new JProgressBar();
-        progressBar.setIndeterminate(true);
+        progressBar.setStringPainted(true);
         progressBar.setVisible(false);
+
+        countLabel = new JLabel("0 / 0");
+        countLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        percentLabel = new JLabel("0%");
+        percentLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        etaLabel = new JLabel("ETA: --");
+        etaLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        milestoneLabel = new JLabel("");
+        milestoneLabel.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        milestoneLabel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
+        milestoneLabel.setVisible(false);
+        milestoneTimer = new Timer(3000, e -> milestoneLabel.setVisible(false));
+        milestoneTimer.setRepeats(false);
+        lastMilestone = 0;
 
         JPanel controlsTop = new JPanel(new BorderLayout(8, 8));
         JPanel sourcePanel = new JPanel();
@@ -85,7 +106,17 @@ public class TyperUi {
         controls.setBorder(BorderFactory.createEmptyBorder(8, 12, 12, 12));
         controls.add(controlsTop, BorderLayout.NORTH);
         controls.add(controlsBottom, BorderLayout.CENTER);
-        controls.add(progressBar, BorderLayout.SOUTH);
+
+        JPanel progressRow = new JPanel(new BorderLayout(8, 8));
+        JPanel progressMeta = new JPanel(new BorderLayout(8, 8));
+        progressMeta.add(countLabel, BorderLayout.WEST);
+        progressMeta.add(etaLabel, BorderLayout.CENTER);
+        progressMeta.add(percentLabel, BorderLayout.EAST);
+        progressRow.add(progressMeta, BorderLayout.NORTH);
+        progressRow.add(milestoneLabel, BorderLayout.CENTER);
+        progressRow.add(progressBar, BorderLayout.SOUTH);
+
+        controls.add(progressRow, BorderLayout.SOUTH);
 
         chooseFileButton.addActionListener(e -> chooseFile());
         startButton.addActionListener(e -> startTyping());
@@ -93,7 +124,7 @@ public class TyperUi {
         frame.add(scrollPane, BorderLayout.CENTER);
         frame.add(controls, BorderLayout.SOUTH);
 
-        frame.setPreferredSize(new Dimension(560, 360));
+        frame.setPreferredSize(new Dimension(640, 420));
         frame.pack();
         frame.setLocationRelativeTo(null);
     }
@@ -137,11 +168,15 @@ public class TyperUi {
             }
         }
 
+        int total = payload.codePointCount(0, payload.length());
+        resetProgress(total);
         setUiBusy(true);
         new Thread(() -> {
             try {
                 Thread.sleep(START_DELAY_MS);
-                TypingEngine.type(payload);
+                TypingEngine.type(payload, (typed, totalCount, elapsedNanos) -> {
+                    SwingUtilities.invokeLater(() -> updateProgress(typed, totalCount, elapsedNanos));
+                });
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
             } finally {
@@ -159,6 +194,56 @@ public class TyperUi {
         progressBar.setVisible(busy);
         frame.revalidate();
         frame.repaint();
+    }
+
+    private void resetProgress(int total) {
+        lastMilestone = 0;
+        milestoneLabel.setVisible(false);
+        milestoneTimer.stop();
+        progressBar.setIndeterminate(false);
+        progressBar.setMinimum(0);
+        progressBar.setMaximum(Math.max(1, total));
+        progressBar.setValue(0);
+        countLabel.setText("0 / " + total);
+        percentLabel.setText("0%");
+        etaLabel.setText("ETA: --");
+        progressBar.setString("0%");
+    }
+
+    private void updateProgress(int typed, int total, long elapsedNanos) {
+        int safeTotal = Math.max(1, total);
+        int percent = (int) Math.min(100, Math.round((typed * 100.0) / safeTotal));
+        progressBar.setMaximum(safeTotal);
+        progressBar.setValue(Math.min(typed, safeTotal));
+        progressBar.setString(percent + "%");
+        countLabel.setText(typed + " / " + total);
+        percentLabel.setText(percent + "%");
+        etaLabel.setText("ETA: " + formatEta(typed, total, elapsedNanos));
+
+        int milestone = typed / 1000;
+        if (milestone > lastMilestone) {
+            lastMilestone = milestone;
+            milestoneLabel.setText((milestone * 1000) + " caracteres emitidos");
+            milestoneLabel.setVisible(true);
+            milestoneTimer.restart();
+        }
+    }
+
+    private String formatEta(int typed, int total, long elapsedNanos) {
+        if (typed <= 0) {
+            return "--";
+        }
+        long elapsedMs = elapsedNanos / 1_000_000L;
+        long remaining = Math.max(0, total - typed);
+        long etaMs = (elapsedMs * remaining) / Math.max(1, typed);
+        long seconds = etaMs / 1000;
+        long hours = seconds / 3600;
+        long minutes = (seconds % 3600) / 60;
+        long secs = seconds % 60;
+        if (hours > 0) {
+            return String.format("%d:%02d:%02d", hours, minutes, secs);
+        }
+        return String.format("%02d:%02d", minutes, secs);
     }
 
     private void showMessage(String message) {
