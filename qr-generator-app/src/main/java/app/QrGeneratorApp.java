@@ -12,18 +12,35 @@ import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
+import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.WindowConstants;
 import javax.swing.Timer;
+import javax.swing.ButtonGroup;
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Rectangle;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -34,6 +51,7 @@ public final class QrGeneratorApp {
     private static final int CHUNK_SIZE = 2000;
     private static final int SLIDE_DELAY_MS = 2000;
     private static QrSlideshow currentSlideshow;
+    private static Path selectedFile;
 
     private QrGeneratorApp() {
     }
@@ -59,13 +77,59 @@ public final class QrGeneratorApp {
         frame.setLayout(new BorderLayout());
 
         JTextArea textArea = new JTextArea(8, 40);
+        textArea.setLineWrap(true);
+        textArea.setWrapStyleWord(true);
+        textArea.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         JScrollPane scrollPane = new JScrollPane(textArea);
+        scrollPane.setBorder(BorderFactory.createEmptyBorder(12, 12, 0, 12));
+
+        JRadioButton sourceText = new JRadioButton("Texto", true);
+        JRadioButton sourceFile = new JRadioButton("Archivo (Base64)");
+        sourceText.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        sourceFile.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        ButtonGroup sourceGroup = new ButtonGroup();
+        sourceGroup.add(sourceText);
+        sourceGroup.add(sourceFile);
+
+        JButton chooseFileButton = new JButton("Seleccionar archivo");
+        chooseFileButton.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        chooseFileButton.setFocusPainted(false);
+        JLabel fileLabel = new JLabel("Ningun archivo seleccionado");
+        fileLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
 
         JButton generateButton = new JButton("Generar QR");
-        generateButton.addActionListener(event -> onGenerate(frame, textArea.getText()));
+        generateButton.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        generateButton.setFocusPainted(false);
+        generateButton.addActionListener(event -> onGenerate(frame, textArea.getText(), sourceText.isSelected()));
+
+        chooseFileButton.addActionListener(event -> chooseFile(frame, fileLabel, sourceFile));
 
         frame.add(scrollPane, BorderLayout.CENTER);
-        frame.add(generateButton, BorderLayout.SOUTH);
+
+        JPanel sourceRow = new JPanel();
+        sourceRow.setLayout(new BoxLayout(sourceRow, BoxLayout.X_AXIS));
+        sourceRow.add(sourceText);
+        sourceRow.add(Box.createHorizontalStrut(12));
+        sourceRow.add(sourceFile);
+        sourceRow.add(Box.createHorizontalGlue());
+        sourceRow.add(chooseFileButton);
+        sourceRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JPanel fileRow = new JPanel();
+        fileRow.setLayout(new BoxLayout(fileRow, BoxLayout.X_AXIS));
+        fileRow.add(fileLabel);
+        fileRow.add(Box.createHorizontalGlue());
+        fileRow.add(generateButton);
+        fileRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        JPanel controls = new JPanel();
+        controls.setLayout(new BoxLayout(controls, BoxLayout.Y_AXIS));
+        controls.setBorder(BorderFactory.createEmptyBorder(10, 12, 12, 12));
+        controls.add(sourceRow);
+        controls.add(Box.createVerticalStrut(8));
+        controls.add(fileRow);
+
+        frame.add(controls, BorderLayout.SOUTH);
 
         frame.pack();
         frame.setLocationRelativeTo(null);
@@ -79,12 +143,29 @@ public final class QrGeneratorApp {
         });
     }
 
-    private static void onGenerate(JFrame parent, String text) {
-        String raw = text == null ? "" : text;
-        if (raw.trim().isEmpty()) {
-            JOptionPane.showMessageDialog(parent, "Pega un texto para generar el QR.", "Falta texto",
-                    JOptionPane.WARNING_MESSAGE);
-            return;
+    private static void onGenerate(JFrame parent, String text, boolean useTextSource) {
+        String raw;
+        if (useTextSource) {
+            raw = text == null ? "" : text;
+            if (raw.trim().isEmpty()) {
+                JOptionPane.showMessageDialog(parent, "Pega un texto para generar el QR.", "Falta texto",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+        } else {
+            if (selectedFile == null) {
+                JOptionPane.showMessageDialog(parent, "Selecciona un archivo primero.", "Falta archivo",
+                        JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            try {
+                byte[] bytes = Files.readAllBytes(selectedFile);
+                raw = Base64.getEncoder().encodeToString(bytes);
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(parent, "No se pudo leer el archivo.", "Error",
+                        JOptionPane.ERROR_MESSAGE);
+                return;
+            }
         }
 
         if (currentSlideshow != null) {
@@ -97,6 +178,19 @@ public final class QrGeneratorApp {
         } catch (WriterException ex) {
             JOptionPane.showMessageDialog(parent, "Error generando QR: " + ex.getMessage(), "Error",
                     JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private static void chooseFile(JFrame parent, JLabel fileLabel, JRadioButton sourceFile) {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Seleccionar archivo");
+        chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        chooser.setAcceptAllFileFilterUsed(true);
+        int result = chooser.showOpenDialog(parent);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            selectedFile = chooser.getSelectedFile().toPath();
+            fileLabel.setText(selectedFile.toString());
+            sourceFile.setSelected(true);
         }
     }
 
@@ -201,6 +295,7 @@ public final class QrGeneratorApp {
         private void updateImage() {
             try {
                 BufferedImage image = generateQr(chunks.get(index), bounds.width, bounds.height);
+                drawIndexBadge(image, index);
                 Image scaled = image.getScaledInstance(bounds.width, bounds.height, Image.SCALE_SMOOTH);
                 label.setIcon(new ImageIcon(scaled));
                 frame.setTitle("QR " + (index + 1) + "/" + chunks.size());
@@ -209,6 +304,35 @@ public final class QrGeneratorApp {
                 JOptionPane.showMessageDialog(frame, "Error generando QR: " + ex.getMessage(), "Error",
                         JOptionPane.ERROR_MESSAGE);
             }
+        }
+    }
+
+    private static void drawIndexBadge(BufferedImage image, int index) {
+        Graphics2D g2d = image.createGraphics();
+        try {
+            int minDim = Math.min(image.getWidth(), image.getHeight());
+            int padding = Math.max(12, minDim / 50);
+            int fontSize = Math.max(18, minDim / 20);
+            String text = Integer.toString(index);
+
+            g2d.setFont(new Font(Font.SANS_SERIF, Font.BOLD, fontSize));
+            FontMetrics metrics = g2d.getFontMetrics();
+            int textWidth = metrics.stringWidth(text);
+            int textHeight = metrics.getAscent();
+
+            int boxWidth = textWidth + padding * 2;
+            int boxHeight = textHeight + padding;
+
+            int x = padding;
+            int y = padding;
+
+            g2d.setColor(Color.WHITE);
+            g2d.fillRoundRect(x, y, boxWidth, boxHeight, padding, padding);
+            g2d.setColor(Color.BLACK);
+            g2d.drawRoundRect(x, y, boxWidth, boxHeight, padding, padding);
+            g2d.drawString(text, x + padding, y + padding / 2 + textHeight);
+        } finally {
+            g2d.dispose();
         }
     }
 }
