@@ -34,6 +34,8 @@ import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.Image;
 import java.awt.Rectangle;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
 import java.awt.image.BufferedImage;
 import java.io.IOException;
@@ -295,6 +297,7 @@ public final class QrGeneratorApp {
         private final List<String> chunks;
         private final Timer timer;
         private int index;
+        private BufferedImage currentImage;
 
         private QrSlideshow(JFrame parent, Rectangle bounds, List<String> chunks) throws WriterException {
             this.bounds = bounds;
@@ -324,6 +327,13 @@ public final class QrGeneratorApp {
                 @Override
                 public void windowClosed(java.awt.event.WindowEvent e) {
                     stop();
+                }
+            });
+
+            frame.addComponentListener(new ComponentAdapter() {
+                @Override
+                public void componentResized(ComponentEvent e) {
+                    updateScaledIcon();
                 }
             });
 
@@ -358,16 +368,27 @@ public final class QrGeneratorApp {
 
         private void updateImage() {
             try {
-                BufferedImage image = generateQr(chunks.get(index), bounds.width, bounds.height);
-                drawIndexBadge(image, index);
-                Image scaled = image.getScaledInstance(bounds.width, bounds.height, Image.SCALE_SMOOTH);
-                label.setIcon(new ImageIcon(scaled));
+                currentImage = generateQr(chunks.get(index), bounds.width, bounds.height);
+                drawIndexBadge(currentImage, index);
+                updateScaledIcon();
                 frame.setTitle("QR " + (index + 1) + "/" + chunks.size());
             } catch (WriterException ex) {
                 timer.stop();
                 JOptionPane.showMessageDialog(frame, "Error generando QR: " + ex.getMessage(), "Error",
                         JOptionPane.ERROR_MESSAGE);
             }
+        }
+
+        private void updateScaledIcon() {
+            if (currentImage == null) {
+                return;
+            }
+            int width = Math.max(1, frame.getContentPane().getWidth());
+            int height = Math.max(1, frame.getContentPane().getHeight());
+            Image scaled = currentImage.getScaledInstance(width, height, Image.SCALE_SMOOTH);
+            label.setIcon(new ImageIcon(scaled));
+            label.revalidate();
+            label.repaint();
         }
     }
 
