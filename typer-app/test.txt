@@ -1,0 +1,4 @@
+Texto de prueba con tildes y símbolos:
+¿Qué onda? ¡Todo chido!
+Programación: {} [] () <> ; : , . | \ / + - * = _ @ # $ % ^ & ~
+Renglón con acentos: áéíóú ÁÉÍÓÚ ñ Ñ ü Ü
