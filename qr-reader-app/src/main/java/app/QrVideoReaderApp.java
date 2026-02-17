@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -31,7 +32,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public final class QrVideoReaderApp {
-    private static final Path DEFAULT_VIDEO = Path.of("video", "all3.mp4");
+    private static final Path DEFAULT_VIDEO = Path.of("video", "1.mp4");
     private static final Path DEFAULT_OUTPUT_DIR = Path.of("out");
     private static final String WARMUP_PAYLOAD = "__WARMUP__";
     private static final int DEFAULT_FPS = 6;
@@ -152,12 +153,12 @@ public final class QrVideoReaderApp {
 
             if (!firstQrDetected) {
                 decodeAttempts++;
-                String firstText = decodeQr(analysisRegion);
+                String firstText = decodeQrRobust(image);
                 if (firstText != null) {
                     previousDecoded = firstText;
                     firstQrDetected = true;
                     segmentFrames.clear();
-                    segmentFrames.add(new SegmentFrame(copyImage(analysisRegion), framePath.getFileName().toString()));
+                    segmentFrames.add(new SegmentFrame(copyImage(image), framePath.getFileName().toString()));
                     if (isWarmupPayload(firstText)) {
                         System.out.println(String.format(Locale.US, "[---] Warmup detectado en %s, ignorado",
                                 framePath.getFileName()));
@@ -197,7 +198,7 @@ public final class QrVideoReaderApp {
                 segmentFrames.clear();
             }
 
-            segmentFrames.add(new SegmentFrame(copyImage(analysisRegion), framePath.getFileName().toString()));
+            segmentFrames.add(new SegmentFrame(copyImage(image), framePath.getFileName().toString()));
             previousSignature = signature;
         }
 
@@ -225,15 +226,11 @@ public final class QrVideoReaderApp {
         int attempts = 0;
         String fallbackSameAsPrevious = null;
         String fallbackLabel = null;
-        int sampleEvery = 1;
-        if (decodeWindow > 0 && frames.size() > decodeWindow) {
-            sampleEvery = (int) Math.ceil(frames.size() / (double) decodeWindow);
-        }
-
-        for (int i = 0; i < frames.size(); i += sampleEvery) {
-            SegmentFrame frame = frames.get(i);
+        List<Integer> sampleIndexes = buildSampleIndexes(frames.size(), decodeWindow);
+        for (int index : sampleIndexes) {
+            SegmentFrame frame = frames.get(index);
             attempts++;
-            String text = decodeQr(frame.image);
+            String text = decodeQrRobust(frame.image);
             if (text != null) {
                 if (previousDecoded == null || !text.equals(previousDecoded)) {
                     return new SegmentDecodeResult(text, frame.label, attempts);
@@ -245,26 +242,10 @@ public final class QrVideoReaderApp {
             }
         }
 
-        if (sampleEvery != 1) {
-            for (SegmentFrame frame : frames) {
-                attempts++;
-                String text = decodeQr(frame.image);
-                if (text != null) {
-                    if (previousDecoded == null || !text.equals(previousDecoded)) {
-                        return new SegmentDecodeResult(text, frame.label, attempts);
-                    }
-                    if (fallbackSameAsPrevious == null) {
-                        fallbackSameAsPrevious = text;
-                        fallbackLabel = frame.label;
-                    }
-                }
-            }
-        }
-
         if (frames.size() >= 2) {
             BufferedImage avg = averageFrames(frames);
             attempts++;
-            String text = decodeQr(avg);
+            String text = decodeQrRobust(avg);
             if (text != null) {
                 if (previousDecoded == null || !text.equals(previousDecoded)) {
                     return new SegmentDecodeResult(text, "promedio_segmento", attempts);
@@ -280,6 +261,43 @@ public final class QrVideoReaderApp {
             return new SegmentDecodeResult(fallbackSameAsPrevious, fallbackLabel, attempts);
         }
         return new SegmentDecodeResult(null, "", attempts);
+    }
+
+    private static List<Integer> buildSampleIndexes(int frameCount, int decodeWindow) {
+        if (frameCount <= 0) {
+            return List.of();
+        }
+
+        int targetSamples = decodeWindow <= 0 ? 4 : decodeWindow;
+        targetSamples = Math.max(3, targetSamples);
+        targetSamples = Math.min(targetSamples, frameCount);
+
+        LinkedHashSet<Integer> indexes = new LinkedHashSet<>();
+        indexes.add(frameCount / 2);
+        for (int i = 0; i < targetSamples; i++) {
+            double pos = (i + 0.5) / targetSamples;
+            int idx = (int) Math.round(pos * (frameCount - 1));
+            indexes.add(Math.max(0, Math.min(frameCount - 1, idx)));
+        }
+        indexes.add(0);
+        indexes.add(frameCount - 1);
+
+        List<Integer> ordered = new ArrayList<>(indexes);
+        if (ordered.size() > targetSamples) {
+            return new ArrayList<>(ordered.subList(0, targetSamples));
+        }
+        return ordered;
+    }
+
+    private static String decodeQrRobust(BufferedImage image) {
+        List<BufferedImage> candidates = buildDecodeCandidates(image);
+        for (BufferedImage candidate : candidates) {
+            String decoded = decodeQr(candidate);
+            if (decoded != null) {
+                return decoded;
+            }
+        }
+        return null;
     }
 
     private static String decodeQr(BufferedImage image) {
@@ -318,10 +336,25 @@ public final class QrVideoReaderApp {
         return result == null ? null : result.getText();
     }
 
+    private static List<BufferedImage> buildDecodeCandidates(BufferedImage image) {
+        List<BufferedImage> candidates = new ArrayList<>();
+        candidates.add(image);
+
+        double[] ratios = {0.95, 0.90, 0.85, 0.80, 0.70};
+        for (double ratio : ratios) {
+            BufferedImage crop = centerSquareCrop(image, ratio);
+            if (crop != null) {
+                candidates.add(crop);
+            }
+        }
+        return candidates;
+    }
+
     private static List<BufferedImage> buildVariants(BufferedImage image) {
         List<BufferedImage> variants = new ArrayList<>();
         variants.add(image);
         variants.add(scaleImage(image, 1.5));
+        variants.add(scaleImage(image, 2.0));
         return variants;
     }
 
