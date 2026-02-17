@@ -32,7 +32,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public final class QrVideoReaderApp {
-    private static final Path DEFAULT_VIDEO = Path.of("video", "1.mp4");
+    private static final Path DEFAULT_VIDEO = Path.of("video", "ola7.mp4");
     private static final Path DEFAULT_OUTPUT_DIR = Path.of("out");
     private static final String WARMUP_PAYLOAD = "__WARMUP__";
     private static final int DEFAULT_FPS = 6;
