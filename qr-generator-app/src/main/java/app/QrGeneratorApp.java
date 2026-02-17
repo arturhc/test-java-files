@@ -8,17 +8,21 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 
+import javax.imageio.ImageIO;
 import javax.swing.JButton;
 import javax.swing.JFrame;
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JFileChooser;
+import javax.swing.JDialog;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JProgressBar;
 import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
 import javax.swing.WindowConstants;
 import javax.swing.Timer;
 import javax.swing.ButtonGroup;
@@ -45,15 +49,17 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.awt.GraphicsEnvironment;
+import java.util.stream.Stream;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 
 public final class QrGeneratorApp {
     private static final int CHUNK_SIZE = 2000;
-    private static final int SLIDE_DELAY_MS = 1250;
+    private static final int SLIDE_DELAY_MS = 500;
     private static final String WARMUP_QR_PAYLOAD = "__WARMUP__";
     private static QrSlideshow currentSlideshow;
     private static Path selectedFile;
@@ -106,7 +112,7 @@ public final class QrGeneratorApp {
         JButton generateButton = new JButton("Generar QR");
         generateButton.setFont(new Font("Segoe UI", Font.BOLD, 12));
         generateButton.setFocusPainted(false);
-        generateButton.addActionListener(event -> onGenerate(frame, textArea.getText(), sourceText.isSelected()));
+        generateButton.addActionListener(event -> onGenerate(frame, generateButton, textArea.getText(), sourceText.isSelected()));
 
         JLabel qrCountLabel = new JLabel("Total QRs: 0");
         qrCountLabel.setFont(new Font("Segoe UI", Font.PLAIN, 12));
@@ -185,7 +191,7 @@ public final class QrGeneratorApp {
         });
     }
 
-    private static void onGenerate(JFrame parent, String text, boolean useTextSource) {
+    private static void onGenerate(JFrame parent, JButton generateButton, String text, boolean useTextSource) {
         String raw;
         if (useTextSource) {
             raw = text == null ? "" : text;
@@ -219,12 +225,68 @@ public final class QrGeneratorApp {
             currentSlideshow = null;
         }
 
-        try {
-            currentSlideshow = showQrWindow(parent, raw);
-        } catch (WriterException ex) {
-            JOptionPane.showMessageDialog(parent, "Error generando QR: " + ex.getMessage(), "Error",
-                    JOptionPane.ERROR_MESSAGE);
+        List<String> chunks = buildSlideshowChunks(raw, CHUNK_SIZE);
+        if (chunks.isEmpty()) {
+            JOptionPane.showMessageDialog(parent, "No hay contenido para generar QR.", "Sin contenido",
+                    JOptionPane.WARNING_MESSAGE);
+            return;
         }
+
+        Rectangle bounds = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        int dataQrCount = Math.max(0, chunks.size() - 1);
+        System.out.println(String.format(Locale.US,
+                "[generador] Inicio. QRs a generar: %d (datos=%d, warmup=%d), delay=%dms",
+                chunks.size(), dataQrCount, chunks.size() - dataQrCount, SLIDE_DELAY_MS));
+
+        GenerationProgressDialog progressDialog = new GenerationProgressDialog(parent, chunks.size());
+        progressDialog.update(0, chunks.size(), "Preparando...");
+        generateButton.setEnabled(false);
+
+        SwingWorker<PreRenderedSlides, GenerationUpdate> worker = new SwingWorker<>() {
+            @Override
+            protected PreRenderedSlides doInBackground() throws Exception {
+                return QrSlideshow.preRenderSlides(bounds, chunks, (done, total, message) -> {
+                    publish(new GenerationUpdate(done, total, message));
+                });
+            }
+
+            @Override
+            protected void process(List<GenerationUpdate> updates) {
+                if (updates.isEmpty()) {
+                    return;
+                }
+                GenerationUpdate last = updates.get(updates.size() - 1);
+                progressDialog.update(last.done, last.total, last.message);
+            }
+
+            @Override
+            protected void done() {
+                generateButton.setEnabled(true);
+                try {
+                    PreRenderedSlides preRenderedSlides = get();
+                    progressDialog.close();
+                    try {
+                        currentSlideshow = new QrSlideshow(parent, bounds, chunks, preRenderedSlides);
+                        currentSlideshow.start();
+                    } catch (RuntimeException ex) {
+                        deleteRecursively(preRenderedSlides.tempDir);
+                        throw ex;
+                    }
+                    System.out.println(String.format(Locale.US,
+                            "[generador] Reproduccion iniciada. Slides=%d, intervalo=%dms",
+                            chunks.size(), SLIDE_DELAY_MS));
+                } catch (Exception ex) {
+                    progressDialog.close();
+                    String message = extractErrorMessage(ex);
+                    System.out.println("[generador] Error: " + message);
+                    JOptionPane.showMessageDialog(parent, "Error generando QR: " + message, "Error",
+                            JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        };
+
+        worker.execute();
+        progressDialog.showDialog();
     }
 
     private static void chooseFile(JFrame parent, JLabel fileLabel, JRadioButton sourceFile) {
@@ -257,14 +319,6 @@ public final class QrGeneratorApp {
             count = countChunks(selectedFileBase64);
         }
         label.setText("Total QRs: " + count);
-    }
-
-    private static QrSlideshow showQrWindow(JFrame parent, String text) throws WriterException {
-        Rectangle bounds = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
-        List<String> chunks = buildSlideshowChunks(text, CHUNK_SIZE);
-        QrSlideshow slideshow = new QrSlideshow(parent, bounds, chunks);
-        slideshow.start();
-        return slideshow;
     }
 
     private static void waitUntilClosed(CountDownLatch shutdownLatch) {
@@ -305,23 +359,92 @@ public final class QrGeneratorApp {
         return (codePoints + CHUNK_SIZE - 1) / CHUNK_SIZE;
     }
 
+    private static String extractErrorMessage(Throwable throwable) {
+        Throwable root = throwable;
+        if (root.getCause() != null) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        return message == null || message.isBlank() ? root.getClass().getSimpleName() : message;
+    }
+
+    @FunctionalInterface
+    private interface ProgressReporter {
+        void onProgress(int done, int total, String message);
+    }
+
+    private static final class GenerationUpdate {
+        private final int done;
+        private final int total;
+        private final String message;
+
+        private GenerationUpdate(int done, int total, String message) {
+            this.done = done;
+            this.total = total;
+            this.message = message;
+        }
+    }
+
+    private static final class GenerationProgressDialog {
+        private final JDialog dialog;
+        private final JLabel statusLabel;
+        private final JProgressBar progressBar;
+
+        private GenerationProgressDialog(JFrame parent, int total) {
+            dialog = new JDialog(parent, "Generando QRs", false);
+            dialog.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+            dialog.setLayout(new BorderLayout(8, 8));
+
+            statusLabel = new JLabel("Preparando...");
+            statusLabel.setBorder(BorderFactory.createEmptyBorder(10, 12, 0, 12));
+
+            progressBar = new JProgressBar(0, Math.max(1, total));
+            progressBar.setValue(0);
+            progressBar.setStringPainted(true);
+            progressBar.setBorder(BorderFactory.createEmptyBorder(0, 12, 10, 12));
+
+            dialog.add(statusLabel, BorderLayout.NORTH);
+            dialog.add(progressBar, BorderLayout.CENTER);
+            dialog.setSize(new Dimension(420, 110));
+            dialog.setResizable(false);
+            dialog.setLocationRelativeTo(parent);
+        }
+
+        private void update(int done, int total, String message) {
+            int max = Math.max(1, total);
+            int value = Math.max(0, Math.min(done, max));
+            progressBar.setMaximum(max);
+            progressBar.setValue(value);
+            progressBar.setString(value + " / " + max);
+            statusLabel.setText(message);
+        }
+
+        private void showDialog() {
+            dialog.setVisible(true);
+        }
+
+        private void close() {
+            if (dialog.isDisplayable()) {
+                dialog.dispose();
+            }
+        }
+    }
+
     private static final class QrSlideshow {
         private final JFrame frame;
         private final JLabel label;
-        private final Rectangle bounds;
-        private final List<String> chunks;
-        private final boolean hasWarmup;
-        private final int realChunkCount;
+        private final Path tempSlidesDir;
+        private final List<SlideAsset> slides;
         private final Timer timer;
         private int index;
         private BufferedImage currentImage;
+        private boolean slidesDeleted;
 
-        private QrSlideshow(JFrame parent, Rectangle bounds, List<String> chunks) throws WriterException {
-            this.bounds = bounds;
-            this.chunks = chunks;
-            this.hasWarmup = !chunks.isEmpty() && WARMUP_QR_PAYLOAD.equals(chunks.get(0));
-            this.realChunkCount = Math.max(0, chunks.size() - (hasWarmup ? 1 : 0));
+        private QrSlideshow(JFrame parent, Rectangle bounds, List<String> chunks, PreRenderedSlides preRenderedSlides) {
             this.index = 0;
+            this.slidesDeleted = false;
+            this.tempSlidesDir = preRenderedSlides.tempDir;
+            this.slides = preRenderedSlides.slides;
 
             frame = new JFrame();
             frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
@@ -337,10 +460,10 @@ public final class QrGeneratorApp {
                     javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW
             );
 
-            updateImage();
-
             timer = new Timer(SLIDE_DELAY_MS, e -> advance());
             timer.setInitialDelay(SLIDE_DELAY_MS);
+
+            updateImage();
 
             frame.addWindowListener(new java.awt.event.WindowAdapter() {
                 @Override
@@ -362,7 +485,7 @@ public final class QrGeneratorApp {
 
         private void start() {
             frame.setVisible(true);
-            if (chunks.size() > 1) {
+            if (slides.size() > 1) {
                 timer.start();
             }
         }
@@ -371,6 +494,7 @@ public final class QrGeneratorApp {
             if (timer.isRunning()) {
                 timer.stop();
             }
+            cleanupSlides();
             if (frame.isDisplayable()) {
                 frame.dispose();
             }
@@ -378,8 +502,10 @@ public final class QrGeneratorApp {
 
         private void advance() {
             index++;
-            if (index >= chunks.size()) {
+            if (index >= slides.size()) {
                 timer.stop();
+                System.out.println("[generador] Reproduccion finalizada.");
+                cleanupSlides();
                 return;
             }
             updateImage();
@@ -387,31 +513,31 @@ public final class QrGeneratorApp {
 
         private void updateImage() {
             try {
-                currentImage = generateQr(chunks.get(index), bounds.width, bounds.height);
-                drawIndexBadge(currentImage, badgeTextFor(index));
+                SlideAsset slide = slides.get(index);
+                currentImage = ImageIO.read(slide.imagePath.toFile());
+                if (currentImage == null) {
+                    throw new IOException("No se pudo leer slide: " + slide.imagePath);
+                }
                 updateScaledIcon();
-                frame.setTitle(titleFor(index));
-            } catch (WriterException ex) {
+                frame.setTitle(slide.title);
+            } catch (IOException ex) {
                 timer.stop();
-                JOptionPane.showMessageDialog(frame, "Error generando QR: " + ex.getMessage(), "Error",
+                cleanupSlides();
+                JOptionPane.showMessageDialog(frame, "Error mostrando QR: " + ex.getMessage(), "Error",
                         JOptionPane.ERROR_MESSAGE);
             }
         }
 
-        private boolean isWarmupFrame(int slideIndex) {
-            return hasWarmup && slideIndex == 0;
-        }
-
-        private String badgeTextFor(int slideIndex) {
-            if (isWarmupFrame(slideIndex)) {
+        private static String badgeTextFor(boolean hasWarmup, int slideIndex) {
+            if (hasWarmup && slideIndex == 0) {
                 return "W";
             }
             int realIndex = hasWarmup ? slideIndex - 1 : slideIndex;
             return Integer.toString(Math.max(0, realIndex));
         }
 
-        private String titleFor(int slideIndex) {
-            if (isWarmupFrame(slideIndex)) {
+        private static String titleFor(boolean hasWarmup, int realChunkCount, int slideIndex) {
+            if (hasWarmup && slideIndex == 0) {
                 return "QR Warmup";
             }
             int realIndex = hasWarmup ? slideIndex - 1 : slideIndex;
@@ -431,6 +557,87 @@ public final class QrGeneratorApp {
             label.setIcon(new ImageIcon(scaled));
             label.revalidate();
             label.repaint();
+        }
+
+        private static PreRenderedSlides preRenderSlides(
+                Rectangle bounds,
+                List<String> chunks,
+                ProgressReporter reporter
+        ) throws WriterException, IOException {
+            boolean hasWarmup = !chunks.isEmpty() && WARMUP_QR_PAYLOAD.equals(chunks.get(0));
+            int realChunkCount = Math.max(0, chunks.size() - (hasWarmup ? 1 : 0));
+            Path tempDir = Files.createTempDirectory("qr-generator-slides-");
+            List<SlideAsset> renderedSlides = new ArrayList<>(chunks.size());
+            try {
+                System.out.println("[generador] Carpeta temporal: " + tempDir.toAbsolutePath());
+                if (reporter != null) {
+                    reporter.onProgress(0, chunks.size(), "Generando QR 0/" + chunks.size());
+                }
+                for (int i = 0; i < chunks.size(); i++) {
+                    BufferedImage qr = generateQr(chunks.get(i), bounds.width, bounds.height);
+                    drawIndexBadge(qr, badgeTextFor(hasWarmup, i));
+                    Path output = tempDir.resolve(String.format("slide_%04d.png", i));
+                    if (!ImageIO.write(qr, "png", output.toFile())) {
+                        throw new IOException("No se pudo escribir slide PNG: " + output.getFileName());
+                    }
+                    renderedSlides.add(new SlideAsset(output, titleFor(hasWarmup, realChunkCount, i)));
+                    int done = i + 1;
+                    String msg = String.format(Locale.US, "Generando QR %d/%d", done, chunks.size());
+                    if (reporter != null) {
+                        reporter.onProgress(done, chunks.size(), msg);
+                    }
+                    System.out.println(String.format(Locale.US, "[generador] %s", msg));
+                }
+                System.out.println("[generador] Pre-generacion completada.");
+                return new PreRenderedSlides(tempDir, renderedSlides);
+            } catch (WriterException | IOException ex) {
+                deleteRecursively(tempDir);
+                throw ex;
+            }
+        }
+
+        private void cleanupSlides() {
+            if (slidesDeleted) {
+                return;
+            }
+            deleteRecursively(tempSlidesDir);
+            slidesDeleted = true;
+            System.out.println("[generador] Temporales eliminados.");
+        }
+    }
+
+    private static final class PreRenderedSlides {
+        private final Path tempDir;
+        private final List<SlideAsset> slides;
+
+        private PreRenderedSlides(Path tempDir, List<SlideAsset> slides) {
+            this.tempDir = tempDir;
+            this.slides = slides;
+        }
+    }
+
+    private static final class SlideAsset {
+        private final Path imagePath;
+        private final String title;
+
+        private SlideAsset(Path imagePath, String title) {
+            this.imagePath = imagePath;
+            this.title = title;
+        }
+    }
+
+    private static void deleteRecursively(Path root) {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(root)) {
+            walk.sorted((a, b) -> b.compareTo(a)).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException ignored) {
+                }
+            });
+        } catch (IOException ignored) {
         }
     }
 
