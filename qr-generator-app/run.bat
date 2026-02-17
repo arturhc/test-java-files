@@ -1,6 +1,7 @@
 @echo off
 setlocal
 
+set "JAVA_BIN=C:\Program Files\Java\jdk-25.0.2\bin"
 set "SRC=src\main\java"
 set "OUT=out"
 set "LIBS=libs\*"
@@ -8,11 +9,11 @@ set "LIBS=libs\*"
 echo === Compilando ===
 if not exist "%OUT%" mkdir "%OUT%"
 
-javac -encoding UTF-8 -cp "%LIBS%" -d "%OUT%" "%SRC%\app\QrGeneratorApp.java"
+"%JAVA_BIN%\javac.exe" -encoding UTF-8 -cp "%LIBS%" -d "%OUT%" "%SRC%\app\QrGeneratorApp.java"
 if errorlevel 1 goto :error
 
 echo === Ejecutando app ===
-java -cp "%OUT%;%LIBS%" app.QrGeneratorApp
+"%JAVA_BIN%\java.exe" -cp "%OUT%;%LIBS%" app.QrGeneratorApp
 if errorlevel 1 goto :error
 
 goto :eof
