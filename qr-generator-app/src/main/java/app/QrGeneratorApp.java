@@ -53,7 +53,8 @@ import javax.swing.event.DocumentListener;
 
 public final class QrGeneratorApp {
     private static final int CHUNK_SIZE = 2000;
-    private static final int SLIDE_DELAY_MS = 400;
+    private static final int SLIDE_DELAY_MS = 1250;
+    private static final String WARMUP_QR_PAYLOAD = "__WARMUP__";
     private static QrSlideshow currentSlideshow;
     private static Path selectedFile;
     private static String selectedFileBase64;
@@ -260,7 +261,7 @@ public final class QrGeneratorApp {
 
     private static QrSlideshow showQrWindow(JFrame parent, String text) throws WriterException {
         Rectangle bounds = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
-        List<String> chunks = splitIntoChunks(text, CHUNK_SIZE);
+        List<String> chunks = buildSlideshowChunks(text, CHUNK_SIZE);
         QrSlideshow slideshow = new QrSlideshow(parent, bounds, chunks);
         slideshow.start();
         return slideshow;
@@ -288,6 +289,14 @@ public final class QrGeneratorApp {
         return chunks;
     }
 
+    private static List<String> buildSlideshowChunks(String text, int maxCodePoints) {
+        List<String> dataChunks = splitIntoChunks(text, maxCodePoints);
+        List<String> slideshowChunks = new ArrayList<>(dataChunks.size() + 1);
+        slideshowChunks.add(WARMUP_QR_PAYLOAD);
+        slideshowChunks.addAll(dataChunks);
+        return slideshowChunks;
+    }
+
     private static int countChunks(String text) {
         if (text == null || text.isEmpty()) {
             return 0;
@@ -301,6 +310,8 @@ public final class QrGeneratorApp {
         private final JLabel label;
         private final Rectangle bounds;
         private final List<String> chunks;
+        private final boolean hasWarmup;
+        private final int realChunkCount;
         private final Timer timer;
         private int index;
         private BufferedImage currentImage;
@@ -308,6 +319,8 @@ public final class QrGeneratorApp {
         private QrSlideshow(JFrame parent, Rectangle bounds, List<String> chunks) throws WriterException {
             this.bounds = bounds;
             this.chunks = chunks;
+            this.hasWarmup = !chunks.isEmpty() && WARMUP_QR_PAYLOAD.equals(chunks.get(0));
+            this.realChunkCount = Math.max(0, chunks.size() - (hasWarmup ? 1 : 0));
             this.index = 0;
 
             frame = new JFrame();
@@ -375,14 +388,37 @@ public final class QrGeneratorApp {
         private void updateImage() {
             try {
                 currentImage = generateQr(chunks.get(index), bounds.width, bounds.height);
-                drawIndexBadge(currentImage, index);
+                drawIndexBadge(currentImage, badgeTextFor(index));
                 updateScaledIcon();
-                frame.setTitle("QR " + (index + 1) + "/" + chunks.size());
+                frame.setTitle(titleFor(index));
             } catch (WriterException ex) {
                 timer.stop();
                 JOptionPane.showMessageDialog(frame, "Error generando QR: " + ex.getMessage(), "Error",
                         JOptionPane.ERROR_MESSAGE);
             }
+        }
+
+        private boolean isWarmupFrame(int slideIndex) {
+            return hasWarmup && slideIndex == 0;
+        }
+
+        private String badgeTextFor(int slideIndex) {
+            if (isWarmupFrame(slideIndex)) {
+                return "W";
+            }
+            int realIndex = hasWarmup ? slideIndex - 1 : slideIndex;
+            return Integer.toString(Math.max(0, realIndex));
+        }
+
+        private String titleFor(int slideIndex) {
+            if (isWarmupFrame(slideIndex)) {
+                return "QR Warmup";
+            }
+            int realIndex = hasWarmup ? slideIndex - 1 : slideIndex;
+            if (realChunkCount > 0) {
+                return "QR " + (realIndex + 1) + "/" + realChunkCount;
+            }
+            return "QR";
         }
 
         private void updateScaledIcon() {
@@ -398,13 +434,13 @@ public final class QrGeneratorApp {
         }
     }
 
-    private static void drawIndexBadge(BufferedImage image, int index) {
+    private static void drawIndexBadge(BufferedImage image, String badgeText) {
         Graphics2D g2d = image.createGraphics();
         try {
             int minDim = Math.min(image.getWidth(), image.getHeight());
             int padding = Math.max(12, minDim / 50);
             int fontSize = Math.max(18, minDim / 20);
-            String text = Integer.toString(index);
+            String text = badgeText;
 
             g2d.setFont(new Font(Font.SANS_SERIF, Font.BOLD, fontSize));
             FontMetrics metrics = g2d.getFontMetrics();
