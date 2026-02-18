@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-set "JAVA_BIN=C:\Program Files\Java\jdk-25.0.2\bin"
+set "JAVA_BIN=C:\Program Files\Java\jdk-23\bin"
 set "SRC=src\main\java"
 set "OUT=out"
 set "LIBS=libs\*"
