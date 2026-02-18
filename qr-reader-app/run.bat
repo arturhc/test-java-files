@@ -4,7 +4,7 @@ setlocal
 set "SRC=src\main\java"
 set "OUT=out\classes"
 set "LIBS=libs\*"
-set "DEFAULT_ARGS=--fps 6 --threshold 0.10 --decode-window 4"
+set "DEFAULT_ARGS=--video video\ola7.mp4 --fps 4 --threshold 0.10 --decode-window 4"
 
 echo === Compilando ===
 if not exist "%OUT%" mkdir "%OUT%"

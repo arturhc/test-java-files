@@ -85,7 +85,7 @@ public final class QrVideoReaderApp {
     private static void printUsage() {
         System.out.println("Uso:");
         System.out.println("  java app.QrVideoReaderApp [video.mp4] [outputDir]");
-        System.out.println("  java app.QrVideoReaderApp --video video\\all1.mp4 --out out --fps 6 --threshold 0.10 --decode-window 4");
+        System.out.println("  java app.QrVideoReaderApp --video video\\ola7.mp4 --out out --fps 4 --threshold 0.10 --decode-window 4");
     }
 
     private static void extractFrames(Path videoPath, Path tempFramesDir, int fps) throws IOException, InterruptedException {
