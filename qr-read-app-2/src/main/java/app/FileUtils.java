@@ -38,4 +38,24 @@ final class FileUtils {
         } catch (IOException ignored) {
         }
     }
+
+    static void clearDirectory(Path directory) throws IOException {
+        Files.createDirectories(directory);
+        try (Stream<Path> stream = Files.list(directory)) {
+            for (Path child : stream.collect(Collectors.toList())) {
+                deleteRecursivelyStrict(child);
+            }
+        }
+    }
+
+    private static void deleteRecursivelyStrict(Path root) throws IOException {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(root)) {
+            for (Path path : walk.sorted(Comparator.reverseOrder()).collect(Collectors.toList())) {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
 }

@@ -9,8 +9,6 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 final class FrameChangeDetector {
     private static final double ANALYSIS_CROP_RATIO = 0.85;
@@ -19,15 +17,7 @@ final class FrameChangeDetector {
     }
 
     static void prepareFramesOutputDir(Path framesOutputDir) throws IOException {
-        Files.createDirectories(framesOutputDir);
-        try (Stream<Path> stream = Files.list(framesOutputDir)) {
-            for (Path path : stream.collect(Collectors.toList())) {
-                String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
-                if (name.startsWith("change_") && name.endsWith(".png")) {
-                    Files.deleteIfExists(path);
-                }
-            }
-        }
+        FileUtils.clearDirectory(framesOutputDir);
     }
 
     static DetectionResult detectChanges(
